@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Hunt: AI Scavenger</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/universal-sentence-encoder"></script>
+</head>
+<body class="bg-slate-900 text-white font-sans overflow-hidden select-none">
+
+    <div id="app" class="relative h-screen w-full flex flex-col justify-center items-center">
+        
+        <!-- Video Background -->
+        <video id="webcam" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0"></video>
+
+        <!-- 1. Loading Screen -->
+        <div id="loading-screen" class="absolute inset-0 z-50 bg-slate-900 flex flex-col items-center justify-center">
+            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mb-6"></div>
+            <h2 id="loading-text" class="text-2xl font-bold">Loading Object Detector...</h2>
+            <p class="text-slate-400 mt-2 text-sm text-center px-4">Downloading COCO-SSD & Semantic Encoder<br>(This may take a moment on first load)</p>
+        </div>
+
+        <!-- 2. Start Screen -->
+        <div id="start-screen" class="absolute inset-0 z-40 bg-slate-900/90 flex flex-col items-center justify-center hidden backdrop-blur-md px-6 text-center">
+            
+            <!-- Custom Premium SVG Icon replacing Emojis -->
+            <div class="relative inline-flex mb-8">
+                <div class="absolute inset-0 bg-gradient-to-r from-blue-400 to-emerald-400 blur-lg opacity-60 rounded-3xl"></div>
+                <div class="relative bg-slate-800 p-5 rounded-3xl border border-slate-600 shadow-2xl flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="url(#icon-gradient)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <defs>
+                            <linearGradient id="icon-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#60A5FA" />
+                                <stop offset="100%" stop-color="#34D399" />
+                            </linearGradient>
+                        </defs>
+                        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
+                        <circle cx="12" cy="13" r="3"></circle>
+                    </svg>
+                    <!-- Animated Sparkle -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#FCD34D" stroke="none" class="absolute -top-3 -right-3 animate-pulse drop-shadow-md">
+                        <path d="M12 2L14.4 9.6L22 12L14.4 14.4L12 22L9.6 14.4L2 12L9.6 9.6L12 2Z"></path>
+                    </svg>
+                </div>
+            </div>
+
+            <h1 class="text-4xl font-extrabold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">Smart Hunt</h1>
+            <p class="text-lg mb-8 text-slate-300">The Semantic Scavenger Hunt</p>
+            
+            <div class="bg-slate-800/80 p-6 rounded-2xl mb-8 max-w-sm border border-slate-700 text-left shadow-xl">
+                <p class="mb-3 flex items-start gap-2"><span>1️⃣</span> We'll give you a category.</p>
+                <p class="mb-3 flex items-start gap-2"><span>2️⃣</span> Point your camera at an object that fits.</p>
+                <p class="flex items-start gap-2"><span>3️⃣</span> The AI detects everyday objects and checks their semantic meaning!</p>
+            </div>
+
+            <button onclick="initAndStart(this)" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-12 rounded-full shadow-lg shadow-blue-500/30 text-xl transition transform hover:scale-105 active:scale-95">
+                Start Playing
+            </button>
+            <div id="camera-error" class="hidden mt-6 text-red-300 text-sm font-semibold bg-red-900/40 p-3 rounded-lg border border-red-800">
+                Camera access is required to play!
+            </div>
+        </div>
+
+        <!-- 3. Main Game UI -->
+        <div id="game-ui" class="absolute inset-0 z-20 hidden flex flex-col justify-between pointer-events-none">
+            
+            <!-- Top Bar: Score & Time -->
+            <div class="w-full flex justify-between items-start p-6 bg-gradient-to-b from-black/80 via-black/40 to-transparent">
+                <!-- Added transparent backing card for Score -->
+                <div class="flex flex-col bg-black/50 backdrop-blur-md px-5 py-2 rounded-2xl border border-white/10 shadow-lg">
+                    <span class="text-xs text-slate-300 font-bold uppercase tracking-widest">Score</span>
+                    <span id="score-display" class="text-4xl font-black text-emerald-400 drop-shadow-md">0</span>
+                </div>
+                <!-- Added transparent backing card for Time -->
+                <div class="flex flex-col items-end bg-black/50 backdrop-blur-md px-5 py-2 rounded-2xl border border-white/10 shadow-lg">
+                    <span class="text-xs text-slate-300 font-bold uppercase tracking-widest">Time</span>
+                    <span id="time-display" class="text-4xl font-black text-white drop-shadow-md transition-colors duration-300">60s</span>
+                </div>
+            </div>
+
+            <!-- The Prompt -->
+            <div class="w-full flex justify-center mt-2 px-4 pointer-events-auto">
+                <div class="bg-white/95 backdrop-blur-md shadow-2xl rounded-3xl p-6 text-center max-w-md w-full border-b-4 border-blue-500 transition transform hover:scale-[1.02]">
+                    <p class="text-slate-500 text-xs font-bold uppercase tracking-widest mb-2 flex justify-center items-center gap-2">
+                        Find... <span id="items-left-badge" class="bg-blue-100 text-blue-800 text-[10px] px-2 py-0.5 rounded-full"></span>
+                    </p>
+                    <h2 id="prompt-text" class="text-xl font-bold text-slate-800 leading-tight">Loading...</h2>
+                </div>
+            </div>
+
+            <div class="flex-grow"></div> <!-- Spacer -->
+
+            <!-- AI Vision Readout -->
+            <div class="w-full flex flex-col items-center justify-center px-4 mb-6">
+                <!-- Similarity Meter -->
+                <div id="similarity-container" class="mb-2 bg-slate-800/80 px-4 py-1 rounded-full border border-slate-600 hidden">
+                    <span class="text-xs font-bold text-slate-300 uppercase tracking-wide">Semantic Match: <span id="semantic-score" class="text-blue-400">0%</span></span>
+                </div>
+
+                <div class="bg-black/60 backdrop-blur-md px-5 py-2 rounded-full border border-white/10 shadow-lg">
+                    <p id="ai-vision-text" class="text-slate-200 text-sm font-mono flex items-center gap-2">
+                        <span class="animate-pulse h-2 w-2 bg-blue-500 rounded-full inline-block"></span>
+                        Scanning for objects...
+                    </p>
+                </div>
+            </div>
+
+            <!-- Bottom Controls -->
+            <div class="w-full flex justify-center px-4 mb-8 pointer-events-auto">
+                <button onclick="skipItem()" class="bg-slate-800/90 hover:bg-slate-700 text-white px-8 py-4 rounded-full font-bold backdrop-blur-md flex items-center gap-2 border border-slate-600 transition shadow-xl active:bg-slate-600">
+                    ⏭️ Skip Category
+                </button>
+            </div>
+        </div>
+
+        <!-- 4. Success Overlay Animation -->
+        <div id="success-overlay" class="absolute inset-0 z-30 bg-emerald-500/90 flex flex-col items-center justify-center hidden backdrop-blur-md transition-opacity duration-300">
+            <div class="text-9xl mb-4 animate-bounce">🎉</div>
+            <h2 class="text-6xl font-black text-white drop-shadow-xl mb-4">MATCH!</h2>
+            <div class="bg-black/30 px-6 py-3 rounded-full mb-6">
+                <p id="success-item" class="text-xl text-emerald-50 font-bold uppercase tracking-wider">Found: item</p>
+            </div>
+            <p class="text-emerald-100 font-bold text-2xl animate-pulse">+10 Points / +10 Sec</p>
+        </div>
+
+        <!-- 5. Game Over Screen -->
+        <div id="game-over-screen" class="absolute inset-0 z-40 bg-slate-900/95 flex flex-col items-center justify-center hidden backdrop-blur-xl px-6 text-center">
+            <h2 id="game-over-title" class="text-5xl font-black text-white mb-2">Time's Up!</h2>
+            <p id="game-over-subtitle" class="text-xl text-slate-400 mb-8">The hunt is over.</p>
+            
+            <div class="bg-slate-800 p-10 rounded-[2rem] shadow-2xl mb-10 border border-slate-700 w-full max-w-sm">
+                <p class="text-slate-400 font-bold uppercase tracking-widest text-sm mb-2">Final Score</p>
+                <p id="final-score" class="text-7xl font-black text-yellow-400 drop-shadow-md">0</p>
+            </div>
+            
+            <button onclick="resetGame()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-12 rounded-full shadow-lg shadow-blue-500/30 text-xl transition transform hover:scale-105 active:scale-95">
+                Play Again
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Game Configuration & Data ---
+        // By including "hints" containing the exact COCO-SSD target words at the end of the prompt, 
+        // the Universal Sentence Encoder naturally generates a highly accurate and stable Cosine Similarity score.
+        // We separate 'text' (shown to player) from 'semanticText' (used by AI) so the hints stay hidden!
+        const MASTER_CATEGORIES = [
+            { text: "A drinking vessel", semanticText: "A drinking vessel, like a cup or bottle" },
+            { text: "A communication device", semanticText: "A communication device, like a cell phone" },
+            { text: "Something to read", semanticText: "Something to read, like a book" },
+            { text: "A cutting tool", semanticText: "A cutting tool, like scissors or a knife" },
+            { text: "Fresh fruit", semanticText: "Fresh fruit, like an apple, banana, or orange" },
+            { text: "A device to control TV", semanticText: "A device to control TV, like a remote" },
+            { text: "A dental hygiene tool", semanticText: "A dental hygiene tool, like a toothbrush" },
+            { text: "An eating utensil", semanticText: "An eating utensil, like a spoon or fork" },
+            { text: "A personal bag", semanticText: "A personal bag, like a backpack or handbag" },
+            { text: "A round object for games", semanticText: "A round object for games, like a sports ball" },
+            { text: "A timekeeping device", semanticText: "A timekeeping device, like a clock" },
+            { text: "A soft toy", semanticText: "A soft toy, like a teddy bear" },
+            { text: "A deep dish for food", semanticText: "A deep dish for food, like a bowl" },
+            { text: "Rain protection", semanticText: "Rain protection, like an umbrella" },
+            { text: "A baked sweet", semanticText: "A baked sweet, like a donut" },
+            { text: "Food between bread", semanticText: "Food between bread, like a sandwich or hot dog" },
+            { text: "Formal neckwear", semanticText: "Formal neckwear, like a tie" }
+        ];
+
+        // Safely set to 42%. The hints above ensure correct items score > 50%, while wrong items stay low.
+        const MATCH_THRESHOLD = 0.42; 
+
+        // --- Global State ---
+        let visionModel = null;
+        let semanticModel = null;
+        
+        let availableCategories = []; 
+        let videoElement = null;
+        let currentPrompt = "";
+        let currentPromptEmbedding = null;
+        
+        // Cache to prevent repetitive, laggy NLP math on the same word
+        let categoryWordCache = {}; 
+        let isCheckingSimilarity = false;
+        
+        let score = 0;
+        let timeLeft = 60;
+        let itemsFound = 0; // NEW: Track actual items found
+        let isPlaying = false;
+        let isPaused = false;
+        
+        let gameTimer = null;
+
+        // --- Initialization ---
+        window.onload = async () => {
+            try {
+                document.getElementById('loading-text').innerText = "Loading Object Detector...";
+                visionModel = await cocoSsd.load();
+                
+                document.getElementById('loading-text').innerText = "Loading Semantic AI...";
+                semanticModel = await use.load();
+
+                document.getElementById('loading-screen').classList.add('hidden');
+                document.getElementById('start-screen').classList.remove('hidden');
+            } catch (err) {
+                console.error("Failed to load models", err);
+                document.querySelector('#loading-screen h2').innerText = "Error loading AI models.";
+            }
+        };
+
+        // --- Camera Setup ---
+        async function setupCamera() {
+            videoElement = document.getElementById('webcam');
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false
+                });
+                videoElement.srcObject = stream;
+                
+                return new Promise((resolve) => {
+                    videoElement.onloadedmetadata = () => {
+                        videoElement.play();
+                        resolve(true);
+                    };
+                });
+            } catch (e) {
+                console.error("Camera access denied or failed", e);
+                document.getElementById('camera-error').classList.remove('hidden');
+                return false;
+            }
+        }
+
+        // --- Math Helper: Cosine Similarity ---
+        function cosineSimilarity(vecA, vecB) {
+            let dotProduct = 0;
+            let normA = 0;
+            let normB = 0;
+            for (let i = 0; i < vecA.length; i++) {
+                dotProduct += vecA[i] * vecB[i];
+                normA += vecA[i] * vecA[i];
+                normB += vecB[i] * vecB[i];
+            }
+            if (normA === 0 || normB === 0) return 0;
+            return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+        }
+
+        // --- Core Game Loop ---
+        window.initAndStart = async function(btn) {
+            const originalText = btn.innerText;
+            btn.innerText = "Accessing Camera...";
+            btn.disabled = true;
+
+            const camSuccess = await setupCamera();
+            
+            btn.innerText = originalText;
+            btn.disabled = false;
+
+            if (camSuccess) {
+                startGame();
+            }
+        };
+
+        function startGame() {
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.add('hidden');
+            document.getElementById('game-ui').classList.remove('hidden');
+
+            availableCategories = [...MASTER_CATEGORIES]; 
+            score = 0;
+            timeLeft = 60; 
+            itemsFound = 0; // Reset counter
+            isPlaying = true;
+            isPaused = false;
+            
+            updateUI();
+            nextCategory();
+
+            gameTimer = setInterval(() => {
+                if(!isPaused) {
+                    timeLeft--;
+                    updateUI();
+                    if (timeLeft <= 0) endGame('timeout'); // Changed to specific reason
+                }
+            }, 1000);
+
+            processVideoFrame();
+        }
+
+        async function nextCategory() {
+            if (availableCategories.length === 0) {
+                // Check if they actually found all items, or just skipped through them
+                if (itemsFound === MASTER_CATEGORIES.length) {
+                    endGame('all_found'); 
+                } else {
+                    endGame('out_of_categories');
+                }
+                return;
+            }
+
+            const randomIndex = Math.floor(Math.random() * availableCategories.length);
+            const selectedCategory = availableCategories[randomIndex];
+            availableCategories.splice(randomIndex, 1); 
+
+            document.getElementById('prompt-text').innerText = selectedCategory.text;
+            document.getElementById('items-left-badge').innerText = `${availableCategories.length + 1} Left`;
+            document.getElementById('similarity-container').classList.add('hidden');
+            
+            // Clear the semantic cache for the new prompt
+            categoryWordCache = {};
+            currentPromptEmbedding = null;
+
+            // Embed the hidden hint text instead of the short UI text
+            const embeddings = await semanticModel.embed([selectedCategory.semanticText]);
+            currentPromptEmbedding = embeddings.arraySync()[0];
+        }
+
+        function updateUI() {
+            document.getElementById('score-display').innerText = score;
+            const timeDisplay = document.getElementById('time-display');
+            timeDisplay.innerText = timeLeft + 's';
+            
+            if(timeLeft <= 10) {
+                timeDisplay.classList.add('text-red-500', 'animate-pulse');
+                timeDisplay.classList.remove('text-white');
+            } else {
+                timeDisplay.classList.remove('text-red-500', 'animate-pulse');
+                timeDisplay.classList.add('text-white');
+            }
+        }
+
+        // --- AI Classification & Semantic Engine ---
+        async function processVideoFrame() {
+            if (!isPlaying) return;
+
+            if (!isPaused && videoElement.readyState === 4) {
+                
+                const predictions = await visionModel.detect(videoElement);
+                const validPredictions = predictions.filter(p => p.class !== 'person');
+
+                if (validPredictions.length > 0) {
+                    const topPrediction = validPredictions.reduce((prev, current) => (prev.score > current.score) ? prev : current);
+                    
+                    const probability = (topPrediction.score * 100).toFixed(0);
+                    const detectedClass = topPrediction.class.toLowerCase();
+
+                    // Only process/show UI if the Vision model is > 60% confident
+                    if (topPrediction.score > 0.60) {
+                        
+                        document.getElementById('ai-vision-text').innerHTML = `
+                            <span class="animate-pulse h-2 w-2 bg-emerald-400 rounded-full inline-block mr-2"></span>
+                            Sees: <span class="text-white ml-1">${detectedClass}</span> 
+                            <span class="text-slate-400 ml-1">(${probability}%)</span>
+                        `;
+
+                        // 2. Semantics: Check Similarity Using Cache
+                        if (currentPromptEmbedding) {
+                            
+                            let similarity = 0;
+                            let shouldUpdateUI = false;
+
+                            // If we've already calculated the math for this word on this prompt, pull from memory
+                            if (categoryWordCache[detectedClass] !== undefined) {
+                                similarity = categoryWordCache[detectedClass];
+                                shouldUpdateUI = true;
+                            } 
+                            // Otherwise, do the heavy NLP calculation once
+                            else if (!isCheckingSimilarity) {
+                                isCheckingSimilarity = true;
+                                try {
+                                    // By comparing "clock" directly to a prompt that contains the word "clock",
+                                    // the similarity score will naturally be much higher and more accurate!
+                                    const embeddings = await semanticModel.embed([detectedClass]);
+                                    const detectedEmbedding = embeddings.arraySync()[0];
+                                    
+                                    similarity = cosineSimilarity(currentPromptEmbedding, detectedEmbedding);
+                                    
+                                    // Save it to memory so we don't recalculate it if the camera stays on the object
+                                    categoryWordCache[detectedClass] = similarity; 
+                                    shouldUpdateUI = true;
+                                } catch (e) {
+                                    console.error("Embedding error:", e);
+                                } finally {
+                                    isCheckingSimilarity = false;
+                                }
+                            }
+
+                            // Update UI if we have a valid similarity score
+                            if (shouldUpdateUI) {
+                                const similarityPercent = (similarity * 100).toFixed(1);
+                                const simContainer = document.getElementById('similarity-container');
+                                const simScore = document.getElementById('semantic-score');
+                                
+                                simContainer.classList.remove('hidden');
+                                simScore.innerText = `${similarityPercent}%`;
+                                simScore.className = similarity >= MATCH_THRESHOLD ? "text-emerald-400 font-bold" : "text-amber-400 font-bold";
+
+                                if (similarity >= MATCH_THRESHOLD) {
+                                    handleSuccess(detectedClass);
+                                }
+                            }
+                        }
+                    } else {
+                        // Display scanning text when confidence is low
+                        document.getElementById('ai-vision-text').innerHTML = `
+                            <span class="animate-pulse h-2 w-2 bg-blue-500 rounded-full inline-block mr-2"></span>
+                            Scanning for objects...
+                        `;
+                    }
+                } else {
+                    document.getElementById('ai-vision-text').innerHTML = `
+                        <span class="animate-pulse h-2 w-2 bg-blue-500 rounded-full inline-block mr-2"></span>
+                        Scanning for objects...
+                    `;
+                }
+            }
+
+            setTimeout(() => {
+                if (isPlaying) requestAnimationFrame(processVideoFrame);
+            }, 200);
+        }
+
+        // --- Event Handlers ---
+        function handleSuccess(foundItem) {
+            isPaused = true;
+            score += 10;
+            timeLeft += 10; 
+            itemsFound++; // Increment counter on success
+            updateUI();
+
+            const successOverlay = document.getElementById('success-overlay');
+            successOverlay.classList.remove('hidden');
+            document.getElementById('success-item').innerText = `${foundItem}`;
+
+            setTimeout(() => {
+                successOverlay.classList.add('hidden');
+                nextCategory();
+                isPaused = false;
+            }, 2000);
+        }
+
+        window.skipItem = function() {
+            timeLeft = Math.max(0, timeLeft - 2); 
+            updateUI();
+            nextCategory();
+        };
+
+        function endGame(reason) {
+            isPlaying = false;
+            clearInterval(gameTimer);
+            document.getElementById('game-ui').classList.add('hidden');
+            
+            const goTitle = document.getElementById('game-over-title');
+            const goSubtitle = document.getElementById('game-over-subtitle');
+            
+            if (reason === 'all_found') {
+                goTitle.innerText = "You found EVERYTHING!";
+                goTitle.className = "text-5xl font-black text-emerald-400 mb-2 drop-shadow-lg";
+                goSubtitle.innerText = "Incredible scavenging skills!";
+                score += timeLeft; // Bonus for finishing early
+            } else if (reason === 'out_of_categories') {
+                goTitle.innerText = "Deck Empty!";
+                goTitle.className = "text-5xl font-black text-blue-400 mb-2 drop-shadow-lg";
+                goSubtitle.innerText = `You found ${itemsFound} items.`;
+            } else {
+                goTitle.innerText = "Time's Up!";
+                goTitle.className = "text-5xl font-black text-white mb-2";
+                goSubtitle.innerText = `You found ${itemsFound} items.`;
+            }
+
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            document.getElementById('final-score').innerText = score;
+            
+            if (videoElement.srcObject) {
+                videoElement.srcObject.getTracks().forEach(track => track.stop());
+            }
+        }
+
+        window.resetGame = function() {
+            document.getElementById('game-over-screen').classList.add('hidden');
+            document.getElementById('start-screen').classList.remove('hidden');
+        };
+    </script>
+</body>
+</html>
