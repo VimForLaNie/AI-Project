@@ -212,11 +212,26 @@
         // --- Camera Setup ---
         async function setupCamera() {
             videoElement = document.getElementById('webcam');
+            const errorDiv = document.getElementById('camera-error');
+            errorDiv.classList.add('hidden'); // Reset error state on new attempts
+
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-                    audio: false
-                });
+                let stream;
+                try {
+                    // Attempt 1: Try to force the rear/environment camera (Best for mobile)
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: { exact: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } },
+                        audio: false
+                    });
+                } catch (err) {
+                    // Attempt 2: Fallback to ANY available camera (Best for laptops/desktops)
+                    console.log("Rear camera not found, falling back to default camera...");
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+                        audio: false
+                    });
+                }
+
                 videoElement.srcObject = stream;
                 
                 return new Promise((resolve) => {
@@ -225,9 +240,22 @@
                         resolve(true);
                     };
                 });
+
             } catch (e) {
-                console.error("Camera access denied or failed", e);
-                document.getElementById('camera-error').classList.remove('hidden');
+                console.error("Camera access failed:", e);
+                errorDiv.classList.remove('hidden');
+                
+                // Smart Error Reporting so you know exactly what to fix
+                if (e.name === 'NotAllowedError') {
+                    errorDiv.innerText = "Camera blocked by browser. Please check site permissions.";
+                } else if (e.name === 'NotFoundError') {
+                    errorDiv.innerText = "No camera hardware detected on this device.";
+                } else if (e.name === 'NotReadableError') {
+                    errorDiv.innerText = "Camera is already in use by another app (like Zoom/Teams).";
+                } else {
+                    errorDiv.innerText = `Camera error: ${e.message}`;
+                }
+                
                 return false;
             }
         }
